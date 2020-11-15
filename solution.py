@@ -8,7 +8,15 @@ import binascii
 # Should use stdev
 
 ICMP_ECHO_REQUEST = 8
+seq = sequence(0xffff)
 
+def sequence(max):
+  x = 0
+  while True:
+    yield x
+    x += 1
+    if x > max:
+      x = 0
 
 def checksum(string):
     csum = 0
@@ -61,9 +69,12 @@ def sendOnePing(mySocket, destAddr, ID):
     # Header is type (8), code (8), checksum (16), id (16), sequence (16)
 
     myChecksum = 0
+    seq_num = next(seq)
+    seq_num = seq_num & 0xffff
+
     # Make a dummy header with a 0 checksum
     # struct -- Interpret strings as packed binary data
-    header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, 1)
+    header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, seq_num)
     data = struct.pack("d", time.time())
     # Calculate the checksum on the data and the dummy header.
     myChecksum = checksum(header + data)
@@ -77,11 +88,11 @@ def sendOnePing(mySocket, destAddr, ID):
         myChecksum = htons(myChecksum)
 
 
-    header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, 1)
+    header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, seq_num)
     packet = header + data
 
     mySocket.sendto(packet, (destAddr, 1))  # AF_INET address must be tuple, not str
-
+    return seq_num
 
     # Both LISTS and TUPLES consist of a number of objects
     # which can be referenced by their position number within the object.
@@ -94,7 +105,7 @@ def doOnePing(destAddr, timeout):
     mySocket = socket(AF_INET, SOCK_RAW, icmp)
 
     myID = os.getpid() & 0xFFFF  # Return the current process i
-    sendOnePing(mySocket, destAddr, myID)
+    seq_num = sendOnePing(mySocket, destAddr, myID)
     delay = receiveOnePing(mySocket, myID, timeout, destAddr)
     mySocket.close()
     return delay
