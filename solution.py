@@ -1,10 +1,12 @@
 from socket import *
+from statistics import mean, stdev
 import os
 import sys
 import struct
 import time
 import select
 import binascii
+import statistics
 # Should use stdev
 
 ICMP_ECHO_REQUEST = 8
@@ -82,7 +84,8 @@ def receiveOnePing(mySocket, ID, timeout, destAddr, seqNum):
         whatReady = select.select([mySocket], [], [], timeLeft)
         howLongInSelect = (time.time() - startedSelect)
         if whatReady[0] == []:  # Timeout
-            return "Request timed out."
+            print("Request timed out.")
+            return
 
         timeReceived = time.time()
         recPacket, addr = mySocket.recvfrom(1024)
@@ -93,14 +96,16 @@ def receiveOnePing(mySocket, ID, timeout, destAddr, seqNum):
 
           if validate_icmp(ID, seqNum, icmp_data):
             delay = (timeReceived-icmp_data[5])*1000
-            print(f'Reply from {addr[0]}: bytes={len(recPacket)} time={delay}ms TTL={recPacket[8]}')
+            print(f'Reply from {addr[0]}: bytes={len(recPacket)} time={round(delay,2)}ms TTL={recPacket[8]}')
+            return delay
 
         # Fetch the ICMP header from the IP packet
 
         # Fill in end
         timeLeft = timeLeft - howLongInSelect
         if timeLeft <= 0:
-            return "Request timed out."
+            print("Request timed out.")
+            return
 
 
 def sendOnePing(mySocket, destAddr, ID):
@@ -139,6 +144,7 @@ def doOnePing(destAddr, timeout):
 def ping(host, timeout=1):
     # timeout=1 means: If one second goes by without a reply from the server,  	# the client assumes that either the client's ping or the server's pong is lost
     dest = gethostbyname(host)
+    delays = []
     print("Pinging " + dest + " using Python:")
     print("")
     # Calculate vars values and return them
@@ -146,9 +152,26 @@ def ping(host, timeout=1):
     # Send ping requests to a server separated by approximately one second
     for i in range(0,4):
         delay = doOnePing(dest, timeout)
-        print(delay)
+        delays.append(delay)
+        #print(delay)
         time.sleep(1)  # one second
 
+    print("")
+    print("--- host ping statistics ---")
+    delays = list(filter(lambda x: x != None, delays))
+    if len(delays) == 0:
+      packet_min = 0.0
+      packet_max = 0.0
+      packet_avg = 0.0
+      packet_stdev = 0.0
+    else:
+      packet_min = min(delays)
+      packet_max = max(delays)
+      packet_avg = mean(delays)
+      packet_stdev = stdev(delays)
+
+    vars = [str(round(packet_min, 2)), str(round(packet_avg, 2)), str(round(packet_max, 2)),str(round(packet_stdev, 2))]
+    print(vars)
     return vars
 
 if __name__ == '__main__':
