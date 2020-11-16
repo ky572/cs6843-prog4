@@ -8,7 +8,6 @@ import binascii
 # Should use stdev
 
 ICMP_ECHO_REQUEST = 8
-seq = sequence(0xffff)
 
 def sequence(max):
   x = 0
@@ -17,6 +16,8 @@ def sequence(max):
     x += 1
     if x > max:
       x = 0
+
+seq = sequence(0xffff)
 
 def checksum(string):
     csum = 0
@@ -40,9 +41,40 @@ def checksum(string):
     answer = answer >> 8 | (answer << 8 & 0xff00)
     return answer
 
+def compute_zeroed_checksum(type, code, ID, seqNum, data):
+    myChecksum = 0
 
+    # Make a dummy header with a 0 checksum
+    # struct -- Interpret strings as packed binary data
+    header = struct.pack("bbHHh", type, code, myChecksum, ID, seqNum)
+    # Calculate the checksum on the data and the dummy header.
+    myChecksum = checksum(header + data)
 
-def receiveOnePing(mySocket, ID, timeout, destAddr):
+    # Get the right checksum, and put in the header
+
+    if sys.platform == 'darwin':
+        # Convert 16-bit integers from host to network  byte order
+        myChecksum = htons(myChecksum) & 0xffff
+    else:
+        myChecksum = htons(myChecksum)
+
+    return myChecksum
+
+def validate_icmp(ID, seqNum, icmp_data):
+  #validate checksum
+  icmp_type = icmp_data[0]
+  icmp_code = icmp_data[1]
+  icmp_checksum = icmp_data[2]
+  icmp_id = icmp_data[3]
+  icmp_seq = icmp_data[4]
+  icmp_payload = icmp_data[5]
+
+  #zero out checksum in header
+  zeroed_checksum = compute_zeroed_checksum(icmp_type, icmp_code, icmp_id, icmp_seq, struct.pack("d", icmp_payload))
+
+  return zeroed_checksum == icmp_checksum and ID == icmp_id and icmp_seq == seqNum and icmp_type == 0 and icmp_code == 0
+
+def receiveOnePing(mySocket, ID, timeout, destAddr, seqNum):
     timeLeft = timeout
 
     while 1:
@@ -56,6 +88,12 @@ def receiveOnePing(mySocket, ID, timeout, destAddr):
         recPacket, addr = mySocket.recvfrom(1024)
 
         # Fill in start
+        if destAddr == addr[0]:
+          icmp_data = struct.unpack('bbHHhd', recPacket[20:])
+
+          if validate_icmp(ID, seqNum, icmp_data):
+            delay = (timeReceived-icmp_data[5])*1000
+            print(f'Reply from {addr[0]}: bytes={len(recPacket)} time={delay}ms TTL={recPacket[8]}')
 
         # Fetch the ICMP header from the IP packet
 
@@ -68,25 +106,12 @@ def receiveOnePing(mySocket, ID, timeout, destAddr):
 def sendOnePing(mySocket, destAddr, ID):
     # Header is type (8), code (8), checksum (16), id (16), sequence (16)
 
-    myChecksum = 0
     seq_num = next(seq)
     seq_num = seq_num & 0xffff
+    send_time = time.time()
+    data = struct.pack("d", send_time)
 
-    # Make a dummy header with a 0 checksum
-    # struct -- Interpret strings as packed binary data
-    header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, seq_num)
-    data = struct.pack("d", time.time())
-    # Calculate the checksum on the data and the dummy header.
-    myChecksum = checksum(header + data)
-
-    # Get the right checksum, and put in the header
-
-    if sys.platform == 'darwin':
-        # Convert 16-bit integers from host to network  byte order
-        myChecksum = htons(myChecksum) & 0xffff
-    else:
-        myChecksum = htons(myChecksum)
-
+    myChecksum = compute_zeroed_checksum(ICMP_ECHO_REQUEST, 0, ID, seq_num, data)
 
     header = struct.pack("bbHHh", ICMP_ECHO_REQUEST, 0, myChecksum, ID, seq_num)
     packet = header + data
@@ -106,7 +131,7 @@ def doOnePing(destAddr, timeout):
 
     myID = os.getpid() & 0xFFFF  # Return the current process i
     seq_num = sendOnePing(mySocket, destAddr, myID)
-    delay = receiveOnePing(mySocket, myID, timeout, destAddr)
+    delay = receiveOnePing(mySocket, myID, timeout, destAddr, seq_num)
     mySocket.close()
     return delay
 
